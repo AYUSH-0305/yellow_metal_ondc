@@ -1,0 +1,145 @@
+### ============================================
+### YELLOWMETAL API — COMBINED TEST FLOW
+### Run these in order (top to bottom)
+### ============================================
+
+
+### STEP 1: Health Check
+# Verify the server is alive
+GET http://localhost:8080/health
+
+
+### STEP 2: Broadcast / Dedupe (Fresh Lead)
+# Simulates AarthikLabs broadcasting a borrower to us.
+# Expected: is_duplicate = false, provisional offer returned.
+POST http://localhost:8080/api/v1/dedupe
+Content-Type: application/json
+x-api-key: dev_ym_aarthiklabs_secure_key_2026
+
+{
+  "mobile_number": "9876543210",
+  "gold_weight_grams": 45.5
+}
+
+
+### STEP 3: Lead Push (Borrower selected Yellow Metal)
+# AarthikLabs pushes the full lead after borrower picks our offer.
+# Expected: 201 Created, lead_id returned.
+POST http://localhost:8080/api/v1/leads
+Content-Type: application/json
+x-api-key: dev_ym_aarthiklabs_secure_key_2026
+
+{
+  "distributor_ref_id": "DL-TEST-001",
+  "borrower": {
+    "name": "Ramesh Kumar",
+    "mobile_number": "9876543210",
+    "address": "14, Gandhi Nagar Main Road, Bidar",
+    "pincode": "585101",
+    "dob": "1985-04-12"
+  },
+  "gold_weight_grams": 45.5,
+  "offer_accepted": {
+    "interest_rate_pct": 18.0,
+    "tenure_months": 12,
+    "ltv_pct": 75
+  }
+}
+
+
+### STEP 4: Dedupe Again (Should detect duplicate)
+# Same mobile number as Step 2.
+# Expected: is_duplicate = true, existing_lead_id returned.
+POST http://localhost:8080/api/v1/dedupe
+Content-Type: application/json
+x-api-key: dev_ym_aarthiklabs_secure_key_2026
+
+{
+  "mobile_number": "9876543210",
+  "gold_weight_grams": 45.5
+}
+
+
+### STEP 5: Idempotency Test (Retry same lead push)
+# Same distributor_ref_id as Step 3.
+# Expected: 200 OK (not 201), same lead_id, no duplicate row.
+POST http://localhost:8080/api/v1/leads
+Content-Type: application/json
+x-api-key: dev_ym_aarthiklabs_secure_key_2026
+
+{
+  "distributor_ref_id": "DL-TEST-001",
+  "borrower": {
+    "name": "Ramesh Kumar",
+    "mobile_number": "9876543210",
+    "address": "14, Gandhi Nagar Main Road, Bidar",
+    "pincode": "585101",
+    "dob": "1985-04-12"
+  },
+  "gold_weight_grams": 45.5,
+  "offer_accepted": {
+    "interest_rate_pct": 18.0,
+    "tenure_months": 12,
+    "ltv_pct": 75
+  }
+}
+
+
+### STEP 6: Dashboard — List All Leads
+# The dashboard dev will call this. Paginated.
+# Expected: Array with the lead from Step 3.
+GET http://localhost:8080/api/internal/leads?page=1&limit=20
+
+
+### STEP 7: Dashboard — Get Single Lead Detail
+# Replace {LEAD_ID} with the actual lead_id from Step 3 response.
+GET http://localhost:8080/api/internal/leads/849f347f-01e4-4ee1-97d4-11025e40e8d9
+
+
+### STEP 8: Dashboard — Update Status (TRIGGERS WEBHOOK)
+# This is the critical test. Replace {LEAD_ID} below.
+# Expected: Status updated + webhook fired to AarthikLabs.
+PATCH http://localhost:8080/api/internal/leads/849f347f-01e4-4ee1-97d4-11025e40e8d9/status
+Content-Type: application/json
+
+{
+  "status": "contacted",
+  "branch_officer_name": "Suresh Rao",
+  "branch_officer_phone": "9845012233"
+}
+
+
+### STEP 9: Final Disposition — Disbursed
+# Replace {LEAD_ID} below.
+# Expected: Status = disbursed, webhook with disbursement details fired.
+PATCH http://localhost:8080/api/internal/leads/{LEAD_ID}/status
+Content-Type: application/json
+
+{
+  "status": "disbursed",
+  "disbursement_details": "Loan of Rs 2,21,812 disbursed on 20-Sep-2026 via NEFT to A/C XXXX1234"
+}
+
+
+### STEP 10: Validation Test — Bad Payload
+# Missing mobile_number, should fail cleanly.
+# Expected: 400 with detailed Zod error.
+POST http://localhost:8080/api/v1/dedupe
+Content-Type: application/json
+x-api-key: dev_ym_aarthiklabs_secure_key_2026
+
+{
+  "gold_weight_grams": 45.5
+}
+
+
+### STEP 11: Auth Test — Missing API Key
+# No x-api-key header.
+# Expected: 401 Unauthorized.
+POST http://localhost:8080/api/v1/dedupe
+Content-Type: application/json
+
+{
+  "mobile_number": "9876543210",
+  "gold_weight_grams": 45.5
+}
