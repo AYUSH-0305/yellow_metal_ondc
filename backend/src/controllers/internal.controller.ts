@@ -1,60 +1,48 @@
 import { Request, Response } from 'express';
 import prisma from '../utils/db';
 import { WebhookService } from '../services/webhook.service';
-import { z } from 'zod';
+import { GoldRateService } from '../services/goldRate.service';
 
-const updateStatusSchema = z.object({
-  status: z.enum(['new', 'contacted', 'branch_visit_scheduled', 'disbursed', 'rejected']),
-  rejection_reason: z.string().optional(),
-  disbursement_details: z.string().optional(),
-  branch_officer_name: z.string().optional(),
-  branch_officer_phone: z.string().optional(),
-});
-
-/**
- * GET /api/internal/leads
- * Returns all leads for the admin dashboard (with optional filters).
- */
-export const getLeads = async (req: Request, res: Response) => {
+export const updateLeadStatus = async (req: Request, res: Response) => {
   try {
-    const { status, pincode, page = '1', limit = '20' } = req.query;
+    const { status, loan_id, disbursement_amount, disbursement_date, tenure } = req.body;
+    
+    const lead = await prisma.lead.findUnique({ where: { id: req.params.id } });
+    if (!lead) {
+      res.status(404).json({ error: 'not_found' });
+      return;
+    }
 
-    const where: any = {};
-    if (status) where.status = status;
-    if (pincode) where.pincode = pincode;
-
-    const pageNum = parseInt(page as string, 10);
-    const limitNum = parseInt(limit as string, 10);
-
-    const [leads, total] = await Promise.all([
-      prisma.lead.findMany({
-        where,
-        orderBy: { created_at: 'desc' },
-        skip: (pageNum - 1) * limitNum,
-        take: limitNum,
-      }),
-      prisma.lead.count({ where }),
-    ]);
-
-    res.status(200).json({
-      data: leads,
-      pagination: {
-        page: pageNum,
-        limit: limitNum,
-        total,
-        total_pages: Math.ceil(total / limitNum),
-      },
+    const updatedLead = await prisma.lead.update({
+      where: { id: req.params.id },
+      data: {
+        status,
+        loan_id: loan_id || lead.loan_id,
+        disbursement_amount: disbursement_amount || lead.disbursement_amount,
+        disbursement_date: disbursement_date || lead.disbursement_date,
+        tenure: tenure || lead.tenure,
+      }
     });
+
+    WebhookService.dispatch(updatedLead.id, status).catch(console.error);
+
+    res.status(200).json({ data: updatedLead });
+    return;
   } catch (error) {
-    console.error('Get Leads Error:', error);
+    console.error('Update Status Error:', error);
     res.status(500).json({ error: 'internal_server_error' });
+    return;
   }
 };
 
-/**
- * GET /api/internal/leads/:id
- * Returns a single lead with its webhook history.
- */
+export const getLeads = async (req: Request, res: Response) => {
+   const leads = await prisma.lead.findMany({
+     orderBy: { created_at: 'desc' }
+   });
+   res.json({ data: leads });
+   return;
+};
+
 export const getLeadById = async (req: Request, res: Response) => {
   try {
     const lead = await prisma.lead.findUnique({
@@ -67,61 +55,20 @@ export const getLeadById = async (req: Request, res: Response) => {
       return;
     }
 
-    res.status(200).json({ data: lead });
+    // 💰 Dynamically calculate the max loan amount using the Live Gold API
+    const maxEligibleLoan = await GoldRateService.calculateMaxLoanAmount(lead.gold_weight_grams);
+
+    res.status(200).json({ 
+      data: {
+        ...lead,
+        dashboard_insights: {
+          current_22k_spot_rate_used: true,
+          max_eligible_loan_amount_75_ltv: maxEligibleLoan
+        }
+      } 
+    });
   } catch (error) {
     console.error('Get Lead Error:', error);
     res.status(500).json({ error: 'internal_server_error' });
   }
 };
-
-/**
- * PATCH /api/internal/leads/:id/status
- * Updates a lead's status and fires the outbound webhook to AarthikLabs.
- * This is the critical trigger point connecting the Dashboard to the Webhook Dispatcher.
- */
-export const updateLeadStatus = async (req: Request, res: Response) => {
-  try {
-    // 1. Validate the incoming status
-    const parsed = updateStatusSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: 'validation_failed', details: parsed.error.errors });
-      return;
-    }
-
-    const { status, rejection_reason, disbursement_details, branch_officer_name, branch_officer_phone } = parsed.data;
-
-    // 2. Check lead exists
-    const existingLead = await prisma.lead.findUnique({ where: { id: req.params.id } });
-    if (!existingLead) {
-      res.status(404).json({ error: 'not_found', message: 'Lead not found' });
-      return;
-    }
-
-    // 3. Update the lead in the database
-    const updatedLead = await prisma.lead.update({
-      where: { id: req.params.id },
-      data: {
-        status,
-        rejection_reason: status === 'rejected' ? rejection_reason : existingLead.rejection_reason,
-        disbursement_details: status === 'disbursed' ? disbursement_details : existingLead.disbursement_details,
-        branch_officer_name: branch_officer_name || existingLead.branch_officer_name,
-        branch_officer_phone: branch_officer_phone || existingLead.branch_officer_phone,
-      },
-    });
-
-    // 4. 🔥 Fire the outbound webhook to AarthikLabs (non-blocking)
-    WebhookService.dispatch(updatedLead.id, status).catch((err) => {
-      console.error('Webhook dispatch failed:', err);
-    });
-
-    // 5. Return immediately to the dashboard (don't wait for webhook delivery)
-    res.status(200).json({
-      data: updatedLead,
-      message: `Status updated to '${status}'. Webhook dispatched to AarthikLabs.`,
-    });
-  } catch (error) {
-    console.error('Update Status Error:', error);
-    res.status(500).json({ error: 'internal_server_error' });
-  }
-};
-

@@ -8,28 +8,28 @@ datasource db {
 }
 
 model Lead {
-  id                  String   @id @default(uuid())
-  distributor_ref_id  String?  @unique
-  borrower_name       String
+  id                  String   @id
+  customer_id         String?  
+  loan_id             String?  @unique
+  
   mobile_number       String
-  address             String?
+  name                String
   pincode             String?
-  dob                 DateTime?
-  
+  address_line_1      String?
+  address_line_2      String?
   gold_weight_grams   Float
-  interest_rate_pct   Float?
-  tenure_months       Int?
-  ltv_pct             Float?
+  pan                 String?
+  date_of_birth       String?
+  gender              String?
+  offer_accepted_at   DateTime?
   
-  status              String   @default("new")
-  duplicate_flag      Boolean  @default(false)
-  existing_lead_id    String?
-
-  disbursement_details String?
-  rejection_reason     String?
-
-  branch_officer_name  String?
-  branch_officer_phone String?
+  status              String   @default("LEAD_CREATED")
+  
+  disbursement_amount Float?
+  disbursement_date   String?
+  product_type        String   @default("TERM_LOAN")
+  tenure              Int?
+  tenure_unit         String   @default("MONTH")
 
   created_at          DateTime @default(now())
   updated_at          DateTime @updatedAt
@@ -37,15 +37,6 @@ model Lead {
   webhook_events      WebhookEvent[]
 
   @@index([mobile_number])
-  @@index([status])
-}
-
-model DailyGoldRate {
-  id            String   @id @default(uuid())
-  date          DateTime @unique
-  rate_per_gram Float
-  source        String   @default("IBJA_LOWER_OF_TWO")
-  created_at    DateTime @default(now())
 }
 
 model WebhookEvent {
@@ -53,8 +44,8 @@ model WebhookEvent {
   lead_id         String
   lead            Lead     @relation(fields: [lead_id], references: [id])
   status_sent     String
-  payload         String   // JSON string of the full webhook payload
-  delivery_status String   @default("pending") // pending, delivered, failed
+  payload         String   
+  delivery_status String   @default("pending")
   attempts        Int      @default(0)
   last_attempt_at DateTime?
   next_retry_at   DateTime?
@@ -65,5 +56,4 @@ model WebhookEvent {
 
   @@index([lead_id])
   @@index([delivery_status])
-  @@index([next_retry_at])
 }
