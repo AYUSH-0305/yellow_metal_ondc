@@ -3,8 +3,13 @@ export class GoldRateService {
    * Fetches the previous trading day's 5:30 PM closing gold price in rupees/gram.
    */
   static async getLiveGoldRates() {
-    const url = process.env.GOLD_API_URL || "https://spot-app-bice.vercel.app/api/gold";
-    const apiKey = process.env.GOLD_API_KEY || "5071d34e4d439940bb93e6ab563ba0e19088eb745f3897d5";
+    const url = process.env.GOLD_API_URL;
+    const apiKey = process.env.GOLD_API_KEY;
+
+    if (!url || !apiKey) {
+      console.error("CRITICAL ERROR: GOLD_API_URL or GOLD_API_KEY is missing from environment variables.");
+      throw new Error("Internal Server Error: Gold API Configuration Missing");
+    }
 
     try {
       const response = await fetch(url, {
@@ -13,7 +18,7 @@ export class GoldRateService {
           'X-API-Key': apiKey,
           'Content-Type': 'application/json'
         },
-        // 5-second timeout so the dashboard never hangs if the API is slow
+        // 5-second timeout so the dashboard never hangs if the external API is slow
         signal: AbortSignal.timeout(5000) 
       });
 
@@ -21,7 +26,7 @@ export class GoldRateService {
       
       if (!response.ok || data.error) {
         console.error("Gold API Error:", data.error || response.statusText);
-        // Safe fallback in case the API key rotates or endpoint is down
+        // Fallback to a safe rate if the third-party API goes down, to prevent business blockage
         return { "24K": 7600, "22K": 7100, "20K": 6450, "18K": 5800 };
       }
 
