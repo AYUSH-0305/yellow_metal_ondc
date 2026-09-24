@@ -278,11 +278,86 @@ export async function getOverviewStats(now = new Date()): Promise<OverviewStats>
 }
 
 export async function updateLeadStatusRepo(id: string, status: LeadStatus): Promise<void> {
+  let backendId: string | null = null;
+  
+  if (isDemoMode()) {
+    // In demo mode, we use the mock ID
+    backendId = id; 
+  } else {
+    // Fetch real frontend lead to get the Backend ID
+    const current = await prisma.lead.findUniqueOrThrow({
+      where: { id },
+      select: { status: true, distributorRefId: true },
+    });
+    if (current.status === status) return;
+    backendId = current.distributorRefId;
+  }
+
+  // 1. Push status back to the backend so it can fire the Webhook
+  if (backendId) {
+    const backendStatusMap: Record<LeadStatus, string> = {
+      New: "LEAD_CREATED",
+      Contacted: "contacted",
+      Converted: "disbursed",
+      Rejected: "rejected"
+    };
+    
+    try {
+      console.log(`[Frontend] Sending status update to backend for Lead ${backendId}...`);
+      await fetch(`http://localhost:8080/api/internal/leads/${backendId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': 'dev_ym_internal_dashboard_key_2026'
+        },
+        body: JSON.stringify({ 
+          status: backendStatusMap[status] || "contacted",
+          disbursement_amount: status === "Converted" ? 200000.0 : null 
+        })
+      });
+    } catch(err) {
+      console.error("[Frontend] Failed to push status to backend:", err);
+    }
+  }
+
   if (isDemoMode()) {
     demoUpdateStatus(id, status);
     return;
   }
+  const current = await prisma.lead.findUniqueOrThrow({
+    where: { id },
+    select: { status: true, distributorRefId: true },
+  });
 
+  if (current.status === status) return;
+
+  // 2. Push status back to the backend so it can fire the Webhook
+  if (current.distributorRefId) {
+    const backendStatusMap: Record<LeadStatus, string> = {
+      New: "LEAD_CREATED",
+      Contacted: "contacted",
+      Converted: "disbursed",
+      Rejected: "rejected"
+    };
+    
+    try {
+      await fetch(`http://localhost:8080/api/internal/leads/${current.distributorRefId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': 'dev_ym_internal_dashboard_key_2026'
+        },
+        body: JSON.stringify({ 
+          status: backendStatusMap[status] || "contacted",
+          disbursement_amount: status === "Converted" ? 200000.0 : null // Mocking disbursement amount for now
+        })
+      });
+    } catch(err) {
+      console.error("Failed to push status to backend:", err);
+    }
+  }
+
+  // 3. Update Frontend DB
   await prisma.$transaction(async (tx) => {
     const current = await tx.lead.findUniqueOrThrow({
       where: { id },

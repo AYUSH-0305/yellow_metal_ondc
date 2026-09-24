@@ -31,9 +31,11 @@ function mapStatus(status: string): LeadStatus {
   const normalized = status.trim().toLowerCase();
   const known: Record<string, LeadStatus> = {
     new: "New",
+    lead_created: "New",
     contacted: "Contacted",
     converted: "Converted",
     rejected: "Rejected",
+    disbursed: "Converted"
   };
   return known[normalized] ?? "New";
 }
@@ -52,11 +54,14 @@ async function main() {
 
     for (const lead of body.data) {
       if (!lead.distributor_ref_id) continue; // nothing to key the upsert on, skip
+      if (!lead.id) continue;
 
       await prisma.lead.upsert({
         where: { distributorRefId: lead.distributor_ref_id },
+        where: { distributorRefId: lead.id },
         create: {
           distributorRefId: lead.distributor_ref_id,
+          distributorRefId: lead.id,
           source: "AARTHIKLABS",
           name: lead.borrower_name,
           mobile: lead.mobile_number,
