@@ -24,3 +24,16 @@ export const branchReq = z.object({
 export const statusReq = z.object({
   lead_id: z.string()
 });
+
+// Internal (dashboard-facing) status update. Only LEAD_CREATED and
+// DISBURSED are confirmed real values so far — the full status vocabulary
+// (rejected/expired leads per Flow 4) isn't settled yet, so this validates
+// shape (non-empty, UPPER_SNAKE_CASE) rather than a hardcoded enum that
+// would need editing again once that's decided.
+export const updateLeadStatusReq = z.object({
+  status: z.string().min(1).regex(/^[A-Z][A-Z_]*$/, 'status must be UPPER_SNAKE_CASE'),
+  loan_id: z.string().optional(),
+  disbursement_amount: z.number().positive().optional(),
+  disbursement_date: z.string().optional(),
+  tenure: z.number().int().positive().optional(),
+});

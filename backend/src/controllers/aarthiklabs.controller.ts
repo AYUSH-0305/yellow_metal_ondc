@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import prisma from '../utils/db';
 import { dedupeReq, leadCreationReq, branchReq, statusReq } from '../schemas/aarthiklabs.schema';
+import { generateId } from '../utils/ids';
 
 // 1. Customer Dedupe API
 export const handleDedupe = async (req: Request, res: Response) => {
@@ -14,7 +16,7 @@ export const handleDedupe = async (req: Request, res: Response) => {
   if (existingLead) {
     return res.json({
       is_existing_customer: true,
-      customer_id: existingLead.customer_id || `YMCUST${Math.floor(Math.random()*100000)}`
+      customer_id: existingLead.customer_id || generateId('YMCUST')
     });
   }
 
@@ -22,36 +24,54 @@ export const handleDedupe = async (req: Request, res: Response) => {
 };
 
 // 2. Lead Creation API
+const MAX_ID_ATTEMPTS = 5;
+
 export const handleLeadCreation = async (req: Request, res: Response) => {
   const parsed = leadCreationReq.safeParse(req.body);
   if (!parsed.success) return res.status(400).json(parsed.error);
 
-  const lead_id = `YMLEAD${Math.floor(Math.random()*1000000)}`;
-  const customer_id = `YMCUST${Math.floor(Math.random()*1000000)}`;
+  const customer_id = generateId('YMCUST');
 
-  await prisma.lead.create({
-    data: {
-      id: lead_id,
-      customer_id: customer_id,
-      mobile_number: parsed.data.mobile_number,
-      name: parsed.data.name,
-      pincode: parsed.data.pincode,
-      address_line_1: parsed.data.address_line_1,
-      address_line_2: parsed.data.address_line_2,
-      gold_weight_grams: parsed.data.gold_weight_grams,
-      pan: parsed.data.pan,
-      date_of_birth: parsed.data.date_of_birth,
-      gender: parsed.data.gender,
-      offer_accepted_at: new Date(parsed.data.offer_accepted_at),
-      status: "LEAD_CREATED"
+  // id is the primary key and generateId() isn't guaranteed collision-free,
+  // so retry with a fresh id on a unique-constraint violation (P2002)
+  // rather than 500ing on the rare collision.
+  for (let attempt = 1; attempt <= MAX_ID_ATTEMPTS; attempt++) {
+    const lead_id = generateId('YMLEAD');
+    try {
+      await prisma.lead.create({
+        data: {
+          id: lead_id,
+          customer_id: customer_id,
+          mobile_number: parsed.data.mobile_number,
+          name: parsed.data.name,
+          pincode: parsed.data.pincode,
+          address_line_1: parsed.data.address_line_1,
+          address_line_2: parsed.data.address_line_2,
+          gold_weight_grams: parsed.data.gold_weight_grams,
+          pan: parsed.data.pan,
+          date_of_birth: parsed.data.date_of_birth,
+          gender: parsed.data.gender,
+          offer_accepted_at: new Date(parsed.data.offer_accepted_at),
+          status: "LEAD_CREATED"
+        }
+      });
+
+      return res.json({
+        lead_id: lead_id,
+        loan_id: null,
+        status: "LEAD_CREATED"
+      });
+    } catch (error) {
+      const isIdCollision =
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002' &&
+        (error.meta?.target as string[] | undefined)?.includes('id');
+      if (!isIdCollision) throw error;
+      // otherwise loop and try a new id
     }
-  });
+  }
 
-  return res.json({
-    lead_id: lead_id,
-    loan_id: null,
-    status: "LEAD_CREATED"
-  });
+  return res.status(500).json({ error: 'internal_server_error', message: 'Could not generate a unique lead id' });
 };
 
 // 3. Nearest Branch API

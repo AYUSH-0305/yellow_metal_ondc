@@ -37,6 +37,7 @@ model Lead {
   webhook_events      WebhookEvent[]
 
   @@index([mobile_number])
+  @@index([pincode])
 }
 
 model WebhookEvent {
@@ -55,5 +56,5 @@ model WebhookEvent {
   updated_at      DateTime @updatedAt
 
   @@index([lead_id])
-  @@index([delivery_status])
+  @@index([delivery_status, next_retry_at])
 }

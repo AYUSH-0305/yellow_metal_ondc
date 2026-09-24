@@ -86,4 +86,23 @@ export class WebhookService {
       }
     }
   }
+
+  // Crash-recovery sweep: the setTimeout in attemptDelivery is in-memory
+  // only, so a pending retry is lost if the process restarts. Called on a
+  // schedule from server.ts to pick those back up.
+  static async retryPendingWebhooks() {
+    const pending = await prisma.webhookEvent.findMany({
+      where: {
+        delivery_status: 'pending',
+        next_retry_at: { lte: new Date() },
+      },
+    });
+
+    if (pending.length > 0) {
+      console.log(`🔄 Found ${pending.length} pending webhook(s) to retry.`);
+    }
+    for (const event of pending) {
+      await this.attemptDelivery(event.id);
+    }
+  }
 }
